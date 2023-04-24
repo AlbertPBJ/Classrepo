@@ -1,0 +1,238 @@
+---
+title: "Final Memo"
+author: "Albert Serna Jr"
+format: 
+   html: 
+     theme: cosmos
+     df-print: paged
+     code-tools: true
+     embed-resources: true
+     layout: full
+execute: 
+   message: false
+---
+
+ 
+
+```{r}
+#| label: setup
+#| warning: false
+
+
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(stringr)
+library(janitor)
+library(plotly)
+library(reactable)
+library(gapminder)
+library(ggplot2)
+library(readxl)
+options(digits=2, scipen=99)
+```
+
+## First I need to load the data
+
+The data is from the ACLED database of protests in North America from January 1, 2020 to March 17, 2023. This data was used to filter for all protests at drag events, including Drag Story Hours, Drag shows and misc. drag related events. It takes into account the number of peaceful protests and others that would not be considered peaceful. Any protest that is labled "protests with intervention" is not considered to be violent.
+
+```{r}
+
+
+protests <-
+  read_rds("acled_north_america.Rds")
+
+
+```
+
+## Cleanining the data to make sure everything is uniform and no other errors with capitalization occur. 
+
+```{r}
+
+protests_clean <-
+  protests |>
+  clean_names()
+```
+
+
+
+## Hypothesis:
+Far-right protests against drag-story hour events have become more violent over the last three years, according to ACLED data.
+
+Far-right protests at drag or trans have not increased over the last three years.
+
+
+## Questions:
+
+one: Have the number of far-right protests at drag story hour events increased since 2020?
+
+two: Has there been in increase in violence during far-right protests at drag or trans events since 2020?
+
+
+## Here is where I got to the nitty-gritty of things. This combines the various assoc actor columns into a single calumn called "all_actors".
+
+```{r}
+
+protests_narrow <-
+  protests_clean |>
+  unite (  col = "all_actors",
+           assoc_actor_1, actor2,  assoc_actor_2  , actor1,
+           na.rm=TRUE,        
+           remove=FALSE,
+         sep = "; "
+          )
+
+
+```
+
+## Here I filter for events that listed "Drag" in the notes that happened in the United States. It is important to only include the United States because I don't care about those outside the country, but if we remove that filter we could try to find all drag events in North America.
+
+```{r}
+
+protests_narrow |>
+  filter(str_like (notes,  "% drag %")) |>
+  filter(str_detect(event_id_cnty, "(USA|United States)")) |>
+  select(event_date, year, disorder_type, event_type, 
+         sub_event_type, all_actors, country, longitude, latitude, 
+         location, admin1, admin2, notes)
+
+
+```
+
+## I found that it was pulling things unrealted to drag events so I made sure that it was spaceific to darg, remvoing events that were part of the "Drag the Interstate" and "Operation Dragon".
+
+
+```{r}
+filtered_protests<-
+  protests_narrow |>
+  mutate(sub_event_type = case_when(
+    sub_event_type == "Peaceful protest" ~ "Peaceful protest",
+    !sub_event_type == "Protests with intervention" ~ "Protests with intervention",
+    TRUE ~ "Violent protest")) |>
+  filter(str_detect(event_id_cnty, "(USA|United States)")) |>
+  filter ( str_detect ( notes, "Drag" ) )|>
+  filter(!str_detect(notes, "Drag the Interstate|Dragon")) |>
+  select ( event_date, notes, all_actors, event_id_cnty, sub_event_type)
+
+
+
+
+```
+
+## I needed to see how many peacful protests there were over the given time frame, and so I created a data set that only listed peaceful protests at drag events.
+
+```{r}
+peaceful<-
+  filtered_protests |>
+  filter(str_detect(event_id_cnty, "(USA|United States)")) |>
+  filter ( str_detect ( notes, "Drag Queen|Drag Show|Story Hour" ) )|>
+  filter(str_detect(sub_event_type, "Peaceful|Protests with intervention")) |>
+  filter(!str_detect(notes, "Drag the Interstate
+                     |Dragon")) |>
+  select ( notes, all_actors, event_id_cnty, sub_event_type, event_date )
+```
+
+```{r}
+peaceful
+
+```
+
+
+## I wanted to remove peaceful events while still making sure that I was able to view them in a list that I can scroll thrugh. Here I created a new dataset that does just that.
+
+```{r}
+not_peaceful <-
+  filtered_protests |>
+  filter(str_detect(event_id_cnty, "(USA|United States)")) |>
+  filter ( str_detect ( notes, "Drag" ) )|>
+  filter(!str_detect(sub_event_type, "Peaceful")) |>
+  filter(!str_detect(notes, "Drag the Interstate
+                     |Dragon")) |>
+  select ( notes, all_actors, event_id_cnty, sub_event_type, event_date)
+  
+```
+
+## I made a table that will show me the number of events that were not "peaceful" at drag events.
+
+```{r}
+not_peaceful |>
+  filter(str_detect(event_id_cnty, "(USA|United States)")) |>
+  filter ( str_detect ( notes, "Drag" ) )|>
+  filter(!str_detect(sub_event_type, "Peaceful|Protest with intervention")) |>
+  filter(!str_detect(notes, "Drag the Interstate
+                     |Dragon")) |>
+  select ( notes, all_actors, event_id_cnty, sub_event_type, event_date)
+```
+
+##I made the scroll table to get more information in a readable format. This allows us to scroll and take a read without visualizing it in a graph. 
+
+```{r}
+not_peaceful |> 
+  reactable ( 
+    sortable=TRUE, 
+    searchable=TRUE,       
+    resizable = TRUE,
+    height=700,
+    defaultPageSize = 25
+    )
+```
+
+
+
+## This is where I wanted a simple visualization, comparing the number of peaceful and not peaceful protests.
+
+
+```{r}
+not_peaceful_count <- nrow(not_peaceful)
+peaceful_count <- nrow(filtered_protests) - not_peaceful_count
+
+protest_merged <- data.frame(Event_Type = c("Peaceful", "Not Peaceful"), Count = c(peaceful_count, not_peaceful_count ))
+
+ggplot(protest_merged, aes(x = Event_Type, y = Count, fill = Event_Type)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Event Type", y = "Count", fill = "Event Type") +
+  ggtitle("Counts of Non-Peaceful and Peaceful Events Related to Drag in the USA")
+```
+
+## To see a more detailed graf that listed the types of protests over time I needed a new dataset that mutates the event_data column into a date rage that would then serve as an axis.  
+
+```{r}
+protest_time <- 
+  filtered_protests |>
+  mutate(event_date = as.Date(event_date)) |>
+  filter(sub_event_type == "Peaceful" | sub_event_type != "Peaceful") |>
+  group_by(event_date, sub_event_type) |>
+  summarize(count = n())
+
+protest_time
+```
+
+## I made this next graph to show the number of peaceful protests over time compared to the number of non-peaceful protests. I wanted to make sure there was a month count to help read the graph rather than just the years which could be difficult to understand to those looking at the work. 
+
+```{r}
+ggplot(protest_time, aes(x = as.Date(event_date), 
+                         y = count, fill = sub_event_type)) +
+  geom_bar(stat = "identity", position = "stack", width = 20) +
+  scale_fill_manual(values = c("cornflowerblue", "darkred", "darkolivegreen"), 
+                    labels = c("Peaceful Protests", "Protests with Violence", 
+                               "Protests with intervention")) +
+  scale_x_date(date_breaks = "4 month", date_labels = "%b '%y",
+               label = function(date_value)
+                 paste0(month(date_value, label = TRUE),
+                        "\n", year(date_value))) +
+  labs(x = "Event Date", y = "count", fill = "Protest Type") +
+  ggtitle("Peaceful and Non-Peaceful at Drag events from Jan. 2020 to March 2023")
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
